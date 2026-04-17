@@ -33,7 +33,7 @@ class BaseEffectLogic(BaseSegmentationLogic[T], Generic[T, U], ABC):
         self.segmentation_editor.active_effect_name_changed.connect(self._on_effect_changed)
 
     def is_active(self) -> bool:
-        return isinstance(self.active_effect, self._effect_type)
+        return type(self.active_effect) is self._effect_type
 
     @property
     def effect(self) -> U:
