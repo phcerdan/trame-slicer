@@ -47,7 +47,8 @@ class BrushEffectLogic(BaseEffectLogic[TBrush, U], Generic[TBrush, U]):
         )
         self.effect.set_use_sphere_brush(self._brush_state.data.use_sphere_brush)
 
-    def _on_effect_changed(self, _effect_name: str) -> None:
+    def _on_effect_changed(self, effect_name: str) -> None:
+        super()._on_effect_changed(effect_name)
         self._refresh_brush()
         self.effect.parameters_changed.connect(self._on_modified_event)
 

@@ -48,7 +48,8 @@ class IslandsEffectLogic(BaseEffectLogic[IslandsState, SegmentationEffectIslands
             self.data.mode = self.effect.get_island_mode()
             self.data.minimum_size = self.effect.get_minimum_island_size()
 
-    def _on_effect_changed(self, _effect_name: str) -> None:
+    def _on_effect_changed(self, effect_name: str) -> None:
+        super()._on_effect_changed(effect_name)
         if not self.is_active():
             return
         self.effect.parameters_changed.connect(self._on_effect_parameters_changed)

@@ -18,9 +18,27 @@ from vtkmodules.vtkRenderingCore import (
     vtkRenderer,
 )
 
+from .scissors_effect_parameters import BrushInteractionMode
 from .segment_modifier import SegmentModifier
 from .segmentation_effect_pipeline import SegmentationEffectPipeline
 from .segmentation_effect_scissors import SegmentationEffectScissors
+
+
+def create_polydata() -> tuple[vtkPoints, vtkCellArray, vtkCellArray, vtkPolyData, vtkPolyDataMapper2D, vtkActor2D]:
+    points = vtkPoints()
+    lines = vtkCellArray()
+    vertices = vtkCellArray()
+    poly = vtkPolyData()
+    poly.SetLines(lines)
+    poly.SetVerts(vertices)
+    poly.SetPoints(points)
+
+    mapper = vtkPolyDataMapper2D()
+    mapper.SetInputData(poly)
+    actor = vtkActor2D()
+    actor.SetMapper(mapper)
+    actor.VisibilityOff()
+    return points, lines, vertices, poly, mapper, actor
 
 
 class ScissorsPolygonBrush:
@@ -28,26 +46,32 @@ class ScissorsPolygonBrush:
 
     def __init__(self):
         super().__init__()
-        self._points = vtkPoints()
-        self._lines = vtkCellArray()
-        self._vertices = vtkCellArray()
-        self._poly = vtkPolyData()
-        self._poly.SetLines(self._lines)
-        self._poly.SetVerts(self._vertices)
-        self._poly.SetPoints(self._points)
-
-        self._brush_mapper = vtkPolyDataMapper2D()
-        self._brush_mapper.SetInputData(self._poly)
-        self._brush_actor = vtkActor2D()
-        self._brush_actor.SetMapper(self._brush_mapper)
-        self._brush_actor.VisibilityOff()
+        (self._points, self._lines, self._vertices, self._poly, self._brush_mapper, self._brush_actor) = (
+            create_polydata()
+        )
         props = self._brush_actor.GetProperty()
         props.SetColor(1.0, 1.0, 0.0)
         props.SetPointSize(4.0)
         props.SetLineWidth(2.0)
 
+        # Closing line
+        self._show_closing_line = False
+        self._closing_points, _closing_lines, _closing_vertices, _, _, self._closing_brush_actor = create_polydata()
+        self._closing_points.SetNumberOfPoints(2)
+        _closing_lines.InsertNextCell(2, [0, 1])
+        _closing_vertices.InsertNextCell(1, [1])
+        props = self._closing_brush_actor.GetProperty()
+        props.SetColor(0.8, 0.8, 0.0)
+        props.SetPointSize(2.0)
+        props.SetLineWidth(1.0)
+
+    def preview_closing_line(self, preview: bool):
+        self._show_closing_line = preview
+        self._closing_brush_actor.SetVisibility(preview)
+
     def set_visibility(self, visible: bool):
-        self._brush_actor.SetVisibility(int(visible))
+        self._brush_actor.SetVisibility(visible)
+        self._closing_brush_actor.SetVisibility(visible and self._show_closing_line)
 
     def move_last_point(self, x: int, y: int) -> None:
         count = self._points.GetNumberOfPoints()
@@ -62,6 +86,10 @@ class ScissorsPolygonBrush:
         count = self._points.GetNumberOfPoints()
         if count > 1:
             self._lines.InsertNextCell(2, [count - 1, count - 2])
+        if count >= 3:
+            self._closing_points.SetPoint(0, self._points.GetPoint(0))
+            self._closing_points.SetPoint(1, self._points.GetPoint(count - 1))
+            self._closing_points.Modified()
         self._vertices.InsertNextCell(1, [count - 1])
 
     def reset(self) -> None:
@@ -69,6 +97,8 @@ class ScissorsPolygonBrush:
         self._lines.Reset()
         self._vertices.Reset()
         self._poly.Modified()
+
+        self._closing_brush_actor.SetVisibility(False)
 
     @property
     def points(self) -> vtkPoints:
@@ -80,6 +110,9 @@ class ScissorsPolygonBrush:
         Can be used to add or remove the brush from the renderer, configure rendering properties (visibility, color, ...)
         """
         return self._brush_actor
+
+    def get_closing_prop(self) -> vtkProp:
+        return self._closing_brush_actor
 
     def get_property(self) -> vtkProperty2D:
         return self._brush_actor.GetProperty()
@@ -130,6 +163,7 @@ class SegmentationScissorsWidget:
         self._brush.set_visibility(True)
         self._brush_enabled = True
         self._renderer.AddViewProp(self._brush.get_prop())
+        self._renderer.AddViewProp(self._brush.get_closing_prop())
 
     def disable_brush(self) -> None:
         if not self._renderer:
@@ -140,6 +174,7 @@ class SegmentationScissorsWidget:
         self._brush.set_visibility(False)
         self._brush_enabled = False
         self._renderer.RemoveViewProp(self._brush.get_prop())
+        self._renderer.RemoveViewProp(self._brush.get_closing_prop())
 
     def is_brush_enabled(self) -> bool:
         return self._brush_enabled
@@ -159,6 +194,9 @@ class SegmentationScissorsWidget:
     def is_painting(self) -> bool:
         return self._painting
 
+    def preview_closing_line(self, preview: bool):
+        self._brush.preview_closing_line(preview)
+
 
 class SegmentationScissorsPipeline(SegmentationEffectPipeline[SegmentationEffectScissors]):
     def __init__(self) -> None:
@@ -171,7 +209,12 @@ class SegmentationScissorsPipeline(SegmentationEffectPipeline[SegmentationEffect
             int(vtkCommand.MouseMoveEvent): self._MouseMoved,
             int(vtkCommand.LeftButtonPressEvent): self._LeftButtonPressed,
             int(vtkCommand.LeftButtonReleaseEvent): self._LeftButtonReleased,
+            int(vtkCommand.RightButtonPressEvent): self._RightButtonPressed,
         }
+
+    @property
+    def brush_interaction_mode(self) -> BrushInteractionMode:
+        return self._effect.brush_interaction_mode
 
     def SetActive(self, isActive: bool):
         super().SetActive(isActive)
@@ -182,6 +225,12 @@ class SegmentationScissorsPipeline(SegmentationEffectPipeline[SegmentationEffect
     def _OnWidgetInteractionStopped(self, points: vtkPoints) -> None:
         if points.GetNumberOfPoints() == 0:
             return
+        if self.brush_interaction_mode == BrushInteractionMode.POINT_BY_POINT:
+            # Remove preview (last) point
+            new_points = vtkPoints()
+            for i in range(points.GetNumberOfPoints() - 1):
+                new_points.InsertNextPoint(points.GetPoint(i))
+            points = new_points
         self._effect.apply_points_display_coordinates(points, self._view)
 
     def OnRendererAdded(self, renderer: vtkRenderer | None) -> None:
@@ -210,24 +259,46 @@ class SegmentationScissorsPipeline(SegmentationEffectPipeline[SegmentationEffect
 
     def _LeftButtonPressed(self, event_data: vtkMRMLInteractionEventData) -> bool:
         x, y = event_data.GetDisplayPosition()
-        self.widget.start_painting(x, y)
+        if self.brush_interaction_mode == BrushInteractionMode.CONTINUOUS:
+            self.widget.start_painting(x, y)
+        elif self.brush_interaction_mode == BrushInteractionMode.POINT_BY_POINT:
+            if not self.widget.is_painting():
+                self.widget.start_painting(x, y)
+            else:
+                self.widget.move_last_point(x, y)
+                self.widget.add_point(x, y)
         self.RequestRender()
         return True
 
     def _LeftButtonReleased(self, _event_data: vtkMRMLInteractionEventData) -> bool:
-        self.widget.stop_painting()
-        self.RequestRender()
-        return True
+        if self.brush_interaction_mode == BrushInteractionMode.CONTINUOUS:
+            self.widget.stop_painting()
+            self.RequestRender()
+            return True
+        return False
 
     def _MouseMoved(self, event_data: vtkMRMLInteractionEventData) -> bool:
         x, y = event_data.GetDisplayPosition()
         self.widget.move_last_point(x, y)
-        if self.widget.is_painting():
+        if self.widget.is_painting() and self.brush_interaction_mode == BrushInteractionMode.CONTINUOUS:
             self.widget.add_point(x, y)
         self.RequestRender()
 
         # Always let other interactor and displayable managers do whatever they want
         return False
+
+    def _RightButtonPressed(self, _event_data: vtkMRMLInteractionEventData) -> bool:
+        if self.brush_interaction_mode == BrushInteractionMode.POINT_BY_POINT:
+            self.widget.stop_painting()
+            self.RequestRender()
+            return True
+        return False
+
+    def RequestRender(self):
+        self.widget.preview_closing_line(
+            self.brush_interaction_mode == BrushInteractionMode.CONTINUOUS and self.widget.is_painting()
+        )
+        super().RequestRender()
 
     def IsSupportedEvent(self, event_data: vtkMRMLInteractionEventData):
         return event_data.GetType() in self._supported_events

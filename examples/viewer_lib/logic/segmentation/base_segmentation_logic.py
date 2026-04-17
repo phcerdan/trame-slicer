@@ -42,5 +42,8 @@ class BaseEffectLogic(BaseSegmentationLogic[T], Generic[T, U], ABC):
     def set_active(self):
         self.segmentation_editor.set_active_effect_type(self._effect_type)
 
-    def _on_effect_changed(self, effect_name: str) -> None:
-        pass
+    def _on_effect_changed(self, _effect_name: str) -> None:
+        if self.is_active():
+            # Flush all reactive keys to trigger watchers
+            for state_id in self._typed_state.get_reactive_state_id_keys([self._typed_state.name]):
+                self._typed_state.state.dirty(state_id)

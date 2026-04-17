@@ -36,7 +36,8 @@ class ThresholdEffectLogic(BaseEffectLogic[ThresholdState, SegmentationEffectThr
             return
         self.effect.set_threshold_min_max_values(value)
 
-    def _on_effect_changed(self, _effect_name):
+    def _on_effect_changed(self, effect_name: str):
+        super()._on_effect_changed(effect_name)
         if not self.is_active():
             return
 

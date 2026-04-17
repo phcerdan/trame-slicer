@@ -62,8 +62,8 @@ class SmoothingEffectLogic(BrushEffectLogic[SmoothingState, SegmentationEffectSm
             return
         self.effect.apply_smoothing()
 
-    def _on_effect_changed(self, _effect_name) -> None:
-        super()._on_effect_changed(_effect_name)
+    def _on_effect_changed(self, effect_name: str) -> None:
+        super()._on_effect_changed(effect_name)
         self.set_kernel_size(self.data.kernel_size)
         self.set_standard_deviation(self.data.standard_deviation)
         self.set_joint_smoothing_factor(self.data.smoothing_factor)
